@@ -1,0 +1,642 @@
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.1.0/jquery.min.js">
+</script>
+<script type="text/javascript" src="fabric.min.js"></script>
+<script>
+
+var mode = "select";
+var currentShape = "";
+
+var currentCurve = "";
+var globalcurveControl = null;
+var globalL;
+var globalM;
+
+var globmousePos = null;
+var _curX, _curY;
+var canvas = null;
+
+
+objectTypes = {
+    "door": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Architectural_plan%2C_door1.svg/120px-Architectural_plan%2C_door1.svg.png",
+    "window": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/aa/Gray_Rectangle_Tiny.svg/768px-Gray_Rectangle_Tiny.svg.png"
+};
+
+objectSizes = {
+    "door": .45,
+    "window": .09,
+
+}
+
+//Editing Functions
+function drawWalls() {
+    mode = "drawstart";
+    deselectAll();
+    canvas.discardActiveObject();
+    canvas.selection = false;
+}
+
+function curveMode() {
+    mode = "curve";
+    deselectAll();
+    canvas.discardActiveObject();
+    canvas.selection = false;
+}
+
+function deleteMode(){
+	deselectAll();
+	canvas.discardActiveObject();
+	mode = "delete";
+
+}
+
+function saveCanvas() {
+	var serialized = JSON.stringify(canvas);
+	console.log(serialized);
+}
+
+function Addtext() { 
+	var text = new fabric.IText('New label',{fontSize:25,left:80,top:70, selectable:true});
+	canvas.add(text).setActiveObject(text);
+}
+
+function makeCurvePoint(line) {
+    var c = new fabric.Circle({
+      left: line.left,
+      top: line.top,
+      strokeWidth: 3,
+      radius: 7,
+      curvePoint: true,
+      fill: '#fff',
+      stroke: '#666'
+    });
+
+    c.hasBorders = c.hasControls = false;
+
+    c.line = line;
+
+    canvas.add(c);
+  }
+
+function convertToCurved(wall, curve1, curve2, curveControl){
+
+	//First Conversion
+	if (wall.x1 != undefined){
+		pointOne = [];
+		pointOne[0] = "M";
+		pointOne[1] = wall.x1;
+		pointOne[2] = wall.y1;
+
+	    pointTwo = [];
+		pointTwo[0] = "L";
+		pointTwo[1] = wall.x2;
+		pointTwo[2] = wall.y2;
+
+		globalL = pointTwo;
+		globalM = pointOne;
+
+		pointCurve = [];
+
+	}
+	if (curve1 != null && curve2 != null){
+
+		pointOne = [];
+		pointOne[0] = "M";
+		pointOne[1] = globalM[1];
+		pointOne[2] = globalM[2];
+		pointTwo = [];
+
+		pointCurve[0] = "Q";
+		pointCurve[1] = curve1;
+		pointCurve[2] = curve2;
+		pointCurve[3] = globalL[1];
+		pointCurve[4] = globalL[2];
+	}
+
+	console.log(pointOne, pointTwo, pointCurve);
+
+	var curvedWall = new fabric.Path([pointOne, pointTwo, pointCurve], { fill: 'rgba(0,0,0,0)', wall:true, stroke: '#595959', strokeWidth:5, originX:'center',originY:'center'});
+	curvedWall.set({ left: wall.left, top: wall.top });
+
+	
+
+	curvedWall.setCoords();
+	currentCurve = curvedWall;
+	globalcurveControl = curveControl;
+	canvas.add(curvedWall);
+    mode = "editcurve";
+
+    if (curveControl == null){
+    	makeCurvePoint(curvedWall);
+	}
+	else{
+		curveControl.line = curvedWall;
+		canvas.remove(wall);
+	}
+	if (wall.x1 != undefined)
+	{
+		deleteWall(wall);
+		
+	}
+	canvas.renderAll();
+    
+	
+}
+
+function addObject(type) {
+    var objImg = new Image();
+    objImg.crossOrigin = 'anonymous';
+    objImg.onload = function(img) {
+        var obj = new fabric.Image(objImg, {
+            left: 50,
+            top: 70,
+            scaleX: objectSizes[type],
+            scaleY: objectSizes[type]
+        });
+        canvas.add(obj);
+    };
+    objImg.src = objectTypes[type];
+}
+
+
+function deselectLine(line){
+	if (line.editControls != null)
+	{
+		canvas.remove(line.editControls[0]);
+		canvas.remove(line.editControls[1]);
+		line.editControls = null;
+	}
+}
+
+function deselectAll(){
+		for (var i = 0; i < canvas.getObjects('line').length; i++) {
+	        var currentObj = canvas.getObjects('line')[i];
+	        if (currentObj.wall == true){
+				deselectLine(currentObj)
+			}
+		}
+		canvas.discardActiveObject();
+
+	}
+
+function deleteWall(wall){
+	canvas.remove(wall.editControls[0]);
+	canvas.remove(wall.editControls[1]);
+	canvas.remove(wall.measurementText);
+	wall.editControls = null;
+	canvas.remove(wall);
+}
+
+
+function lineControls(line){
+	if (!line.editControls || line.editControls.length < 2)
+	{
+		var lineControl = makeCircle(line.get('x1'), line.get('y1'), line, "x1");
+		canvas.add(lineControl);
+
+		var lineControl2 = makeCircle(line.get('x2'), line.get('y2'), line, "x2");
+		canvas.add(lineControl2);
+
+		line.editControls = [lineControl, lineControl2];
+		canvas.bringForward(lineControl);
+		canvas.bringForward(lineControl2);
+	}
+}
+
+function makeCircle(left, top, line1, controlType) {
+
+    var c = new fabric.Circle({
+      left: left,
+      top: top,
+      strokeWidth: 2,
+      radius: 5,
+      fill: '#fff',
+      stroke: '#666'
+    });
+
+    c.hasControls = c.hasBorders = false;
+
+    c.line1 = line1;
+    c.controlType = controlType;
+
+    return c;
+  }
+
+ function updateMeasurements(measurement, line, isX1){
+
+ 	var anglex2;
+	  var angley2;
+	  var dist;
+	  var angle;
+
+ 	if (isX1 == true)
+ 	{
+ 		measurement.set({
+    	left: (globmousePos.x + line.x2)/2,
+    	top: (globmousePos.y + line.y2)/2
+    });
+
+ 		anglex2 = globmousePos.x - line.x2;
+	  angley2 = globmousePos.y - line.y2;
+	  dist = Math.sqrt( anglex2*anglex2 + angley2*angley2 );
+	  angle = (Math.atan2(angley2, anglex2) / Math.PI * 180);
+
+    	measurement.set({angle: angle+180});
+
+ 	}
+ 	else
+ 	{
+ 		measurement.set({
+    	left: (globmousePos.x + line.x1)/2,
+    	top: (globmousePos.y + line.y1)/2
+    });
+
+ 		anglex2 = globmousePos.x - line.x1;
+	  angley2 = globmousePos.y - line.y1;
+	  dist = Math.sqrt( anglex2*anglex2 + angley2*angley2 );
+	  angle = (Math.atan2(angley2, anglex2) / Math.PI * 180);
+
+    measurement.set({angle: angle});
+
+ 	}
+
+    
+    
+    var imag_dist = (dist/24);
+
+    var feet_meas = Math.floor(imag_dist);
+    var decimal = imag_dist - feet_meas
+
+    var inches = decimal*12;
+
+    
+
+    measurement.text = feet_meas.toString()+ " ' "+ Math.round(inches)+'"';
+    
+
+    measurement.setCoords();
+
+ }
+
+ function updateMeasurementsLine(measurement, line){
+
+ 	measurement.set({
+    	left: (line.x2 + line.x1)/2,
+    	top: (line.y2 + line.y1)/2
+    });
+
+    var anglex2 = line.x2 - line.x1;
+	  var angley2 = line.y2 - line.y1;
+	  var dist = Math.sqrt( anglex2*anglex2 + angley2*angley2 );
+	  var angle = (Math.atan2(angley2, anglex2) / Math.PI * 180);
+
+    measurement.set({angle: angle});
+    
+    var imag_dist = (dist/24);
+
+    var feet_meas = Math.floor(imag_dist);
+    var decimal = imag_dist - feet_meas
+
+    var inches = decimal*12;
+
+    
+
+    measurement.text = feet_meas.toString()+ " ' "+ Math.round(inches)+'"';
+    
+
+    measurement.setCoords();
+
+ }
+
+
+$(document).ready(function() {
+
+    canvas = new fabric.Canvas("canvas", {
+            selection: false,
+            height: 1000,
+            width: 1000
+        });
+
+    fabric.Object.prototype.originX = fabric.Object.prototype.originY = 'center';
+
+        var grid = 50;
+
+                // create grid
+        for (var i = 0; i < (600 / grid); i++) {
+          canvas.add(new fabric.Line([ i * grid, 0, i * grid, 600], { stroke: '#ccc', selectable: false , isGrid:true}));
+          canvas.add(new fabric.Line([ 0, i * grid, 600, i * grid], { stroke: '#ccc', selectable: false, isGrid:true }))
+        }
+
+
+
+    //WALL FUNCTIONS
+
+
+
+    canvas.perPixelTargetFind = true;
+    canvas.targetFindTolerance = 4;
+
+    function addDeleteBtn(x, y){
+	    $(".deleteBtn").remove(); 
+	    var btnLeft = x-10;
+	    var btnTop = y-10;
+	    var deleteBtn = '<div class="deleteBtn" style="border-radius:10px; position:absolute;top:'+btnTop+'px;left:'+btnLeft+'px;cursor:pointer;width:20px;height:20px;"></div>';
+	    $(".canvas-container").append(deleteBtn);
+	}
+
+	
+
+	canvas.on('object:selected',function(e){
+
+
+
+		var objType = e.target.get('type');
+		
+			if (objType != "circle" && objType != "line"){
+		     addDeleteBtn(e.target.oCoords.tr.x, e.target.oCoords.tr.y);
+			}
+
+		    if (objType == 'line') {
+		    	console.log(e.target.toJSON(['measurementText']));
+		    	lineControls(e.target);
+		      _curX = e.e.clientX;
+		      _curY = e.e.clientY;
+		      //console.log(_curX);
+		      //console.log(_curY);
+		      e.target.measurementText.bringToFront();
+		      canvas.renderAll();
+		    }}
+		
+	);
+
+
+	canvas.on('object:modified',function(e){
+		var objType = e.target.get('type');
+		if (objType != "circle" && e.target.curvePoint == null && objType != "line"){
+		    addDeleteBtn(e.target.oCoords.tr.x, e.target.oCoords.tr.y);
+		}
+		if (objType == "line"){
+			e.target.measurementText.bringToFront();
+		}
+	});
+
+	canvas.on('object:scaling',function(e){
+	    $(".deleteBtn").remove(); 
+	});
+
+	canvas.on('object:moving',function(e){
+	    $(".deleteBtn").remove(); 
+	    var p = e.target;
+
+	    var objType = p.get('type');
+
+	    if (objType == 'circle' && e.target.curvePoint != null) {
+	    	//canvas.remove(currentCurve);
+	    	convertToCurved(currentCurve, e.target.left,e.target.top, e.target);
+	    	//e.target.line.path[2][1] = e.target.left;
+        	//e.target.line.path[2][2] = e.target.top;
+	    }
+
+	    if (objType == 'circle' && e.target.curvePoint == null) {
+	    	console.log(p.line1);
+	      if (p.controlType == "x1")
+	      {
+		      p.line1 && p.line1.set({
+		        'x1': p.left,
+		        'y1': p.top
+		      });
+
+		      updateMeasurements(p.line1.measurementText, p.line1, true);
+
+		  }else{
+
+		  	p.line1 && p.line1.set({
+		        'x2': p.left,
+		        'y2': p.top
+		      });
+
+		  	updateMeasurements(p.line1.measurementText, p.line1, false);
+
+		  }
+	      //set coordinates for the lines - should be done if element is moved programmely
+	      p.line1.setCoords();
+	      
+
+	      canvas.renderAll();
+	    } else if (objType == 'line') {
+	      var _curXm = (_curX - e.e.clientX);
+	      var _curYm = (_curY - e.e.clientY);
+
+	      for (var i = 0; i < canvas.getObjects('circle').length; i++) {
+	        var currentObj = canvas.getObjects('circle')[i];
+
+	        if (currentObj.line1.get("name") == p.get('name') && currentObj.curvePoint == null) {
+
+	          currentObj.set({
+	            'left': (currentObj.left - _curXm),
+	            'top': (currentObj.top - _curYm)
+	          });
+
+	          currentObj.setCoords();
+
+	          if (currentObj.controlType == "x1"){
+		          currentObj.line1 && currentObj.line1.set({
+		            'x1': currentObj.left,
+		            'y1': currentObj.top
+		          });
+		      }else{
+		          currentObj.line1 && currentObj.line1.set({
+		            'x2': currentObj.left,
+		            'y2': currentObj.top
+		          });
+		      }
+
+	          currentObj.line1.setCoords();
+	          updateMeasurementsLine(currentObj.line1.measurementText, currentObj.line1);
+	        }
+	      }
+	      _curX = e.e.clientX;
+	      _curY = e.e.clientY;
+	      
+	    }
+	});
+
+	canvas.on('object:rotating',function(e){
+	    $(".deleteBtn").remove(); 
+	});
+
+	$(document).on('click',".deleteBtn",function(){
+    if(canvas.getActiveObject())
+    {
+        canvas.remove(canvas.getActiveObject());
+        $(".deleteBtn").remove();
+    }
+	});
+
+	canvas.on('mouse:over', function(e) {
+		if (e.target != null && e.target.wall == true)
+		{
+			if (mode == "delete"){
+				currentObj = e.target;
+				e.target.set('stroke', 'red');
+			}
+
+			if (mode == "curve"){
+				currentObj = e.target;
+				e.target.set('stroke', 'blue');
+			}
+
+		}
+		
+	    canvas.renderAll();
+	  });
+
+	canvas.on('mouse:out', function(e) {
+	    if (e.target != null && e.target.type == "line" && e.target.wall == true)
+		{
+			if (mode == "delete"){
+				e.target.set('stroke', '#595959');
+			}
+			if (mode == "curve"){
+				e.target.set('stroke', '#595959');
+			}
+		}
+	    canvas.renderAll();
+	  });
+
+    canvas.on("mouse:move", function(event) {
+	  var pos = canvas.getPointer(event.e);
+	  globmousePos = pos;
+
+		  if (mode === "drawend" && currentShape) {
+		    var points = currentShape;
+		    //console.log(points);
+
+		    /*
+		    points[points.length - 1].x = globmousePos.x;
+		    points[points.length - 1].y = globmousePos.y;
+			*/
+		    currentShape.set({
+		      x2: globmousePos.x,
+		      y2: globmousePos.y
+		    });
+
+		    //var points = currentShape.get("points");
+		    
+		    measurement = currentShape.measurementText;
+		    updateMeasurements(measurement, currentShape);
+
+		    canvas.renderAll();
+		  }
+	});
+
+	canvas.on("mouse:up", function(event) {
+		if (mode =="editcurve"){
+			canvas.remove(globalcurveControl);
+			globalcurveControl = null;
+			mode = "select";
+		}
+	});
+
+	canvas.on("mouse:down", function(event) {
+
+		if (mode == "select"){
+			if (event.target == null)
+			{
+				deselectAll();
+			}
+		}
+
+		if (mode == "delete"){
+			if (event.target != undefined){
+				if (event.target.wall == true )
+				{
+					deleteWall(event.target);
+				}
+			}
+		}
+
+		if (mode == "curve"){
+			if (event.target != undefined){
+				if (event.target.wall == true ){
+					convertToCurved(event.target, null, null, null);
+				}
+			}
+		}
+
+		if(!canvas.getActiveObject())
+	    {
+	        $(".deleteBtn").remove(); 
+	    }
+
+	  if (mode === "drawstart") {
+
+  		var points = [ globmousePos.x, globmousePos.y, globmousePos.x, globmousePos.y ];
+
+  		var polygon = new fabric.Line(points, {
+		    strokeWidth: 4,
+		    stroke: '#595959',
+		    selectable: true,
+		    wall: true,
+		    perPixelTargetFind: true,
+		    targetFindTolerance: 20
+		  });
+
+	    currentShape = polygon;
+
+	    var measurementText = new fabric.IText("0' "+' 0"',{fontSize:13,left:currentShape.left,top:currentShape.top, textBackgroundColor:"#fff", selectable:false});
+	    polygon.measurementText = measurementText;
+
+	    canvas.add(currentShape);
+	    canvas.add(measurementText);
+	    mode = "drawend";
+		    //console.info('new polyline');
+
+		  } 
+		  else if (mode === "drawend" && currentShape && currentShape.type === "line") {
+		    var points = currentShape.get("points");
+		    currentShape.set({
+		      x2: globmousePos.x,
+		      y2: globmousePos.y
+		    });
+		    console.log(canvas.toJSON(["customattribute"]));
+		    currentShape.setCoords();
+		    mode = "select";
+		    //canvas.add(makeCircle(currentShape.get('x1'), currentShape.get('y1'), currentShape));
+		    //canvas.add(makeCircle(currentShape.get('x2'), currentShape.get('y2'), currentShape));
+		    lineControls(currentShape);
+		    currentShape.hasControls = currentShape.hasBorders = false;
+		    currentShape = null;
+		    canvas.renderAll();
+		  }
+		});
+
+	});
+
+</script>
+<button onClick="drawWalls()">Draw Walls</button>
+<button onClick="deleteMode()">Delete Walls Mode</button>
+<button onClick="selectMode()">Select Mode</button>
+<button onClick="curveMode()">Curved Wall Mode</button>
+<button onClick="addObject('door');">Door</button>
+<button onClick="addObject('window');">Window</button>
+<button onClick="Addtext();">Add Label</button>
+<button onClick="saveCanvas();">Save</button>
+<div class="canvas-wrap">
+    <canvas class="drawcanvas" id="canvas"></canvas>
+</div>
+
+<style>
+
+.deleteBtn:after {
+  content: '×'; /* UTF-8 symbol */
+  border-radius: 10px;
+  padding:1px;
+  padding-right:5px;
+  padding-left:5px;
+  text-align: center;
+  background-color:#99392a;
+  border:1px solid #63241a;
+  color:#fff;
+}
+
+</style>
